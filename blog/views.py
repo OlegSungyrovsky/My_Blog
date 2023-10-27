@@ -1,17 +1,21 @@
 from django.conf import settings
+from django.contrib.postgres.search import TrigramSimilarity
 from django.core.mail import send_mail
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.shortcuts import render, get_object_or_404
 from django.views.decorators.http import require_POST
-from django.views.generic import ListView
 from django.db.models import Count
 from taggit.models import Tag
 
 from .models import Post
-from .forms import EmailPostForm, CommentForm
+from .forms import EmailPostForm, CommentForm, SearchForm
 
 
 def post_list(request, tag_slug=None):
+    """
+    Предоставляет список всех опубликованных постов или
+    всех опубликованных постов по заданному тегу
+    """
     post_list = Post.published.all()
     tag = None
     if tag_slug:
@@ -31,11 +35,14 @@ def post_list(request, tag_slug=None):
         {
             'posts': posts,
             'tag': tag
-         }
+        }
     )
 
 
 def post_detail(request, year, month, day, post):
+    """
+    Детальная информация о посте со всеми комментариями
+    """
     post = get_object_or_404(
         Post,
         slug=post,
@@ -62,14 +69,11 @@ def post_detail(request, year, month, day, post):
     )
 
 
-class PostListView(ListView):
-    queryset = Post.published.all()
-    context_object_name = 'posts'
-    paginate_by = 3
-    template_name = 'blog/post/list.html'
-
-
 def post_share(request, post_id):
+    """
+    Отправляет письмо на заданный Email
+    с рекомендацией на конкретный пост
+    """
     post = get_object_or_404(
         Post,
         id=post_id,
@@ -112,6 +116,9 @@ def post_share(request, post_id):
 
 @require_POST
 def post_comment(request, post_id):
+    """
+    Создает комментарий к конкретному посту
+    """
     post = get_object_or_404(
         Post,
         id=post_id,
@@ -132,5 +139,32 @@ def post_comment(request, post_id):
             'post': post,
             'form': form,
             'comment': comment
+        }
+    )
+
+
+def post_search(request):
+    """
+    Поиск постов по словам в них
+    """
+    form = SearchForm()
+    query = None
+    results = []
+
+    if 'query' in request.GET:
+        form = SearchForm(request.GET)
+        if form.is_valid():
+            query = form.cleaned_data['query']
+            results = Post.published.annotate(
+                similarity=TrigramSimilarity('title', query),
+            ).filter(similarity__gt=0.1).order_by('-similarity')
+
+    return render(
+        request,
+        'blog/post/search.html',
+        {
+            'form': form,
+            'query': query,
+            'results': results
         }
     )
